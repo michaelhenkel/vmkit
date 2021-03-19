@@ -50,7 +50,7 @@ type Instance struct {
 	Name         string
 	Directory    string
 	PidFile      string
-	Distribution distribution.Distribution
+	Distribution distribution.DistributionType
 	Environmnet  *environment.Environment
 	Image        *image.Image
 	IPAddress    string
@@ -87,16 +87,15 @@ func (i *Instance) Setup() error {
 
 	var dI distribution.DistributionInterface
 
-	switch distribution.Distribution(i.Distribution) {
+	switch distribution.DistributionType(i.Distribution) {
 	case distribution.DebianDist:
-		dI = &distribution.Debian{
-			Environment: env,
-		}
+		distro := &distribution.Debian{}
+		distro.Environment = env
+		dI = distro
 	}
 
 	i.Image = dI.GetImage()
-
-	distExists, err := i.distributionExists(dI, env)
+	distExists, err := distribution.DistributionExists(dI, env.BasePath+"/"+string(i.Distribution)+"/"+dI.GetName())
 	if !distExists {
 		return errors.New("distribution doesn't exist")
 	}
@@ -131,12 +130,13 @@ func (i *Instance) create(dI distribution.DistributionInterface) error {
 	kernel := dI.GetImage().Kernel
 	rootfs := dI.GetImage().Rootfs
 
+	distroPath := i.Environmnet.BasePath + "/" + string(i.Distribution) + "/" + dI.GetName()
 	rootfsExists, err := distribution.FileDirectoryExists(i.Directory + "/" + rootfs)
 	if err != nil {
 		return err
 	}
 	if !rootfsExists {
-		if err := copy(i.Environmnet.BasePath+"/"+string(i.Distribution)+"/"+rootfs, i.Directory+"/"+rootfs); err != nil {
+		if err := copy(distroPath+"/"+rootfs, i.Directory+"/"+rootfs); err != nil {
 			return err
 		}
 	}
@@ -146,7 +146,7 @@ func (i *Instance) create(dI distribution.DistributionInterface) error {
 		return err
 	}
 	if !kernelExists {
-		if err := copy(i.Environmnet.BasePath+"/"+string(i.Distribution)+"/"+kernel, i.Directory+"/"+kernel); err != nil {
+		if err := copy(distroPath+"/"+kernel, i.Directory+"/"+kernel); err != nil {
 			return err
 		}
 	}
@@ -156,7 +156,7 @@ func (i *Instance) create(dI distribution.DistributionInterface) error {
 		return err
 	}
 	if !initrdExists {
-		if err := copy(i.Environmnet.BasePath+"/"+string(i.Distribution)+"/"+initrd, i.Directory+"/"+initrd); err != nil {
+		if err := copy(distroPath+"/"+initrd, i.Directory+"/"+initrd); err != nil {
 			return err
 		}
 	}
@@ -246,8 +246,8 @@ func (i *Instance) createInstance() (*hyperkit.HyperKit, error) {
 	h.VMNet = true
 	h.ISOImages = []string{i.Directory + "/cidata.iso"}
 	h.Console = hyperkit.ConsoleFile
-	h.CPUs = 2
-	h.Memory = 7168
+	h.CPUs = i.CPU
+	h.Memory = i.Memory
 	h.UUID = i.UUID
 
 	/*
@@ -584,19 +584,6 @@ func copy(src, dst string) error {
 		return err
 	}
 	return out.Close()
-}
-
-func (i *Instance) distributionExists(dI distribution.DistributionInterface, env *environment.Environment) (bool, error) {
-
-	distributionExists, err := distribution.DistributionExists(dI, env)
-	if err != nil {
-		return false, err
-	}
-	if !distributionExists {
-		return false, nil
-	}
-
-	return true, nil
 }
 
 func (i *Instance) exists() (bool, error) {

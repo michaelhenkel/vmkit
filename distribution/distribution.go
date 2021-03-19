@@ -13,30 +13,37 @@ import (
 	"github.com/xi2/xz"
 )
 
-type Distribution string
+type DistributionType string
+
+type Distribution struct {
+	Environment *environment.Environment
+	Image       *image.Image
+	Type        DistributionType
+	Name        string
+}
 
 type DistributionInterface interface {
-	Create() error
+	GetName() string
 	GetImage() *image.Image
-	GetDistribution() Distribution
-	CreateImages(*image.Image) error
+	GetDistribution() DistributionType
+	CreateImages(*image.Image, string) error
 	GetDefaultUser() string
 }
 
 const (
-	UbuntuDist Distribution = "Ubuntu"
-	DebianDist Distribution = "Debian"
-	CustomDist Distribution = "Custom"
-	CentosDist Distribution = "Centos"
-	RedhatDist Distribution = "Redhat"
-	FedoraDist Distribution = "Fedora"
+	UbuntuDist DistributionType = "Ubuntu"
+	DebianDist DistributionType = "Debian"
+	CustomDist DistributionType = "Custom"
+	CentosDist DistributionType = "Centos"
+	RedhatDist DistributionType = "Redhat"
+	FedoraDist DistributionType = "Fedora"
 )
 
 func Create(di DistributionInterface, env *environment.Environment) error {
 	distroImage := di.GetImage()
 	distro := di.GetDistribution()
-	distroPath := fmt.Sprintf("%s/%s", env.BasePath, distro)
-	_, err := DistributionDirectoryExists(distroPath, distroImage)
+	distroPath := fmt.Sprintf("%s/%s/%s", env.BasePath, distro, di.GetName())
+	_, err := DistributionDirectoryExists(distroPath)
 	if err != nil {
 		return err
 	}
@@ -60,15 +67,13 @@ func Create(di DistributionInterface, env *environment.Environment) error {
 		}
 	}
 
-	if err := di.CreateImages(distroImage); err != nil {
+	if err := di.CreateImages(distroImage, distroPath); err != nil {
 		return err
 	}
 	return nil
 }
 
-func DistributionExists(di DistributionInterface, env *environment.Environment) (bool, error) {
-	distro := di.GetDistribution()
-	distroPath := fmt.Sprintf("%s/%s", env.BasePath, distro)
+func DistributionExists(di DistributionInterface, distroPath string) (bool, error) {
 	img := di.GetImage()
 
 	kernelImageExists, err := KernelImageExists(distroPath, img)
@@ -110,7 +115,7 @@ func InitrdExists(distributionPath string, img *image.Image) (bool, error) {
 	return FileDirectoryExists(distributionPath + "/" + img.Initrd)
 }
 
-func DistributionDirectoryExists(distributionPath string, img *image.Image) (bool, error) {
+func DistributionDirectoryExists(distributionPath string) (bool, error) {
 	dirExists, err := FileDirectoryExists(distributionPath)
 	if err != nil {
 		return false, err

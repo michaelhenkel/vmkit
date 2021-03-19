@@ -5,20 +5,23 @@ import (
 
 	"github.com/michaelhenkel/vmkit/distribution"
 	"github.com/michaelhenkel/vmkit/environment"
-	"github.com/michaelhenkel/vmkit/instance"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v2"
 )
 
 var (
-	distro string
+	distroType string
+	distroFile string
 )
 
 func init() {
 	log.SetReportCaller(true)
 	createDistributionCmd.Flags().StringVarP(&name, "name", "n", "", "-name")
-	createDistributionCmd.Flags().StringVarP(&distro, "distribution", "d", "Debian", "-ds")
+	createDistributionCmd.Flags().StringVarP(&distroType, "type", "t", "Debian", "distribution type")
+	createDistributionCmd.Flags().StringVarP(&distroFile, "file", "f", "", "distribution file")
 	createDistributionCmd.MarkFlagRequired("name")
+	createDistributionCmd.MarkFlagRequired("type")
 }
 
 var createDistributionCmd = &cobra.Command{
@@ -32,29 +35,35 @@ var createDistributionCmd = &cobra.Command{
 			log.Println(err)
 			os.Exit(1)
 		}
+		distro := &distribution.Distribution{
+			Name:        name,
+			Environment: env,
+		}
+		if distroFile != "" {
+			distroYaml, err := os.ReadFile(distroFile)
+			if err != nil {
+				log.Println(err)
+				os.Exit(1)
+			}
+			if err := yaml.Unmarshal(distroYaml, distro); err != nil {
+				log.Println(err)
+				os.Exit(1)
+			}
+		}
 
 		var dI distribution.DistributionInterface
-
-		switch distribution.Distribution(distro) {
+		switch distribution.DistributionType(distroType) {
 		case distribution.DebianDist:
-			dI = &distribution.Debian{
-				Environment: env,
+			debian := &distribution.Debian{}
+			debian.Distribution = distro
+			if distro.Image != nil {
+				debian.Distribution.Image = distro.Image
 			}
+			dI = debian
 		}
 
 		if err := distribution.Create(dI, env); err != nil {
 			return
 		}
-
-		inst := &instance.Instance{
-			Name:         name,
-			Distribution: distribution.Distribution(distro),
-		}
-
-		if err := inst.Setup(); err != nil {
-			log.Println(err)
-			os.Exit(1)
-		}
-
 	},
 }

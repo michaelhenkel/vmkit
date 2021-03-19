@@ -1,19 +1,15 @@
 package distribution
 
 import (
-	"fmt"
-
-	"github.com/michaelhenkel/vmkit/environment"
 	"github.com/michaelhenkel/vmkit/image"
 )
 
 type Debian struct {
-	Environment *environment.Environment
-	Image       image.Image
+	*Distribution
 }
 
-var DefaultDebian = &Debian{
-	Image: image.Image{
+func (d *Debian) DefaultDistribution() *Debian {
+	d.Distribution.Image = &image.Image{
 		Rootfs:       "disk.raw",
 		Kernel:       "vmlinuz-4.19.0-14-amd64",
 		Initrd:       "initrd.img-4.19.0-14-amd64",
@@ -21,28 +17,30 @@ var DefaultDebian = &Debian{
 		ImageFile:    "debian-10-generic-amd64-daily-20210316-578.tar.xz",
 		RootfsFormat: image.XZ,
 		FSLabel:      "root=UUID=e2964738-3c8b-4a26-8b61-8044940ae6c1",
-	},
+	}
+	return d
 }
 
 func (d *Debian) GetImage() *image.Image {
-	return &DefaultDebian.Image
+	if d.Image == nil {
+		return d.DefaultDistribution().Image
+	}
+	return d.Image
 }
 
 func (d *Debian) GetDefaultUser() string {
 	return "debian"
 }
 
-func (d *Debian) GetDistribution() Distribution {
+func (d *Debian) GetName() string {
+	return d.Name
+}
+
+func (d *Debian) GetDistribution() DistributionType {
 	return DebianDist
 }
 
-func (d *Debian) Create() error {
-	d.Image = DefaultDebian.Image
-	return nil
-}
-
-func (d *Debian) CreateImages(img *image.Image) error {
-	distroPath := fmt.Sprintf("%s/Debian", d.Environment.BasePath)
+func (d *Debian) CreateImages(img *image.Image, distroPath string) error {
 	kernelImageExists, err := KernelImageExists(distroPath, img)
 	if err != nil {
 		return err
