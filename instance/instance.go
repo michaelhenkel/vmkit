@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -25,7 +24,6 @@ import (
 	"github.com/kdomanski/iso9660"
 	"github.com/michaelhenkel/vmkit/distribution"
 	"github.com/michaelhenkel/vmkit/environment"
-	"github.com/michaelhenkel/vmkit/image"
 	"github.com/pborman/uuid"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
@@ -50,9 +48,8 @@ type Instance struct {
 	Name         string
 	Directory    string
 	PidFile      string
-	Distribution distribution.DistributionType
+	Distribution *distribution.Distribution
 	Environmnet  *environment.Environment
-	Image        *image.Image
 	IPAddress    string
 	CmdLine      string
 	UUID         string
@@ -61,21 +58,16 @@ type Instance struct {
 }
 
 func init() {
-	//log.SetReportCaller(true)
-	//log.SetLevel(log.InfoLevel)
 	hyperkit.SetLogger(&logrus.Logger{Level: logrus.Level(1)})
 }
 
 func (i *Instance) Setup() error {
 
-	if err := verifyRootPermissions(); err != nil {
-		return err
-	}
 	usr, err := user.Current()
 	if err != nil {
 		return err
 	}
-	directory := fmt.Sprintf("%s/.vmkit/%s", usr.HomeDir, i.Name)
+	directory := fmt.Sprintf("%s/.vmkit/instances/%s", usr.HomeDir, i.Name)
 	i.Directory = directory
 	i.PidFile = directory + "/hyperkit.pid"
 
@@ -85,19 +77,8 @@ func (i *Instance) Setup() error {
 	}
 	i.Environmnet = env
 
-	var dI distribution.DistributionInterface
-
-	switch distribution.DistributionType(i.Distribution) {
-	case distribution.DebianDist:
-		distro := &distribution.Debian{}
-		distro.Environment = env
-		dI = distro
-	}
-
-	i.Image = dI.GetImage()
-	distExists, err := distribution.DistributionExists(dI, env.BasePath+"/"+string(i.Distribution)+"/"+dI.GetName())
-	if !distExists {
-		return errors.New("distribution doesn't exist")
+	if err := i.Distribution.GetImage(env); err != nil {
+		return err
 	}
 
 	envExists, err := i.exists()
@@ -118,19 +99,19 @@ func (i *Instance) Setup() error {
 		}
 	}
 	i.UUID = uuid.NewUUID().String()
-	i.CmdLine = i.Image.FSLabel + " loglevel=3 console=ttyS0 console=tty0 noembed nomodeset norestore waitusb=10 systemd.legacy_systemd_cgroup_controller=yes random.trust_cpu=on hw_rng_model=virtio base host=" + i.Name
-	if err := i.create(dI); err != nil {
+	i.CmdLine = i.Distribution.Image.FSLabel + " loglevel=3 console=ttyS0 console=tty0 noembed nomodeset norestore waitusb=10 systemd.legacy_systemd_cgroup_controller=yes random.trust_cpu=on hw_rng_model=virtio base host=" + i.Name
+	if err := i.create(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (i *Instance) create(dI distribution.DistributionInterface) error {
-	initrd := dI.GetImage().Initrd
-	kernel := dI.GetImage().Kernel
-	rootfs := dI.GetImage().Rootfs
+func (i *Instance) create() error {
+	initrd := i.Distribution.Image.Initrd
+	kernel := i.Distribution.Image.Kernel
+	rootfs := i.Distribution.Image.Rootfs
 
-	distroPath := i.Environmnet.BasePath + "/" + string(i.Distribution) + "/" + dI.GetName()
+	distroPath := i.Environmnet.BasePath + "/" + string(i.Distribution.Type) + "/" + i.Distribution.Name
 	rootfsExists, err := distribution.FileDirectoryExists(i.Directory + "/" + rootfs)
 	if err != nil {
 		return err
@@ -175,6 +156,9 @@ func (i *Instance) create(dI distribution.DistributionInterface) error {
 		}
 	}
 
+	if err := verifyRootPermissions(); err != nil {
+		return err
+	}
 	h, err := i.createInstance()
 	if err != nil {
 		return err
@@ -196,8 +180,7 @@ func (i *Instance) create(dI distribution.DistributionInterface) error {
 	if err := i.setupIP(mac); err != nil {
 		return err
 	}
-
-	if err := chownR(i.Directory, os.Getuid(), os.Getgid()); err != nil {
+	if err := chownR(filepath.Dir(i.Directory), os.Getuid(), os.Getgid()); err != nil {
 		return err
 	}
 
@@ -209,7 +192,7 @@ func (i *Instance) create(dI distribution.DistributionInterface) error {
 		return err
 	}
 
-	fmt.Printf("ssh -i %s %s@%s\n", i.Directory+"/id_rsa", dI.GetDefaultUser(), i.IPAddress)
+	fmt.Printf("ssh -o IdentitiesOnly=yes -i %s %s@%s\n", i.Directory+"/id_rsa", i.Distribution.Image.DefaultUser, i.IPAddress)
 
 	return nil
 }
@@ -241,8 +224,8 @@ func (i *Instance) createInstance() (*hyperkit.HyperKit, error) {
 		return nil, err
 	}
 
-	h.Kernel = i.Directory + "/" + i.Image.Kernel
-	h.Initrd = i.Directory + "/" + i.Image.Initrd
+	h.Kernel = i.Directory + "/" + i.Distribution.Image.Kernel
+	h.Initrd = i.Directory + "/" + i.Distribution.Image.Initrd
 	h.VMNet = true
 	h.ISOImages = []string{i.Directory + "/cidata.iso"}
 	h.Console = hyperkit.ConsoleFile
@@ -261,7 +244,7 @@ func (i *Instance) createInstance() (*hyperkit.HyperKit, error) {
 
 	h.Disks = []hyperkit.Disk{
 		&hyperkit.RawDisk{
-			Path: i.Directory + "/" + i.Image.Rootfs,
+			Path: i.Directory + "/" + i.Distribution.Image.Rootfs,
 			Size: 2048,
 			Trim: true,
 		},

@@ -1,0 +1,8 @@
+rootfs: disk.raw
+kernel: vmlinuz-4.19.0-14-amd64
+initrd: initrd.img-4.19.0-14-amd64
+imageURL: https://cloud.debian.org/images/cloud/buster/daily/20210319-581
+rootfsFormt: xz
+imageFile: debian-10-generic-amd64-daily-20210319-581.tar.xz
+bootPartition: /dev/sda1
+defaultUser: debian

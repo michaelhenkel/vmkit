@@ -16,7 +16,8 @@ var (
 			// Do Stuff Here
 		},
 	}
-	name string
+	name       string
+	distroName string
 )
 
 func init() {

@@ -14,6 +14,7 @@ require (
 	github.com/golang/protobuf v1.5.1 // indirect
 	github.com/google/uuid v1.2.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
+	github.com/h2non/filetype v1.1.1 // indirect
 	github.com/juju/juju v0.0.0-20210316233007-efc2dc644511
 	github.com/juju/utils/v2 v2.0.0-20210305225158-eedbe7b6b3e2 // indirect
 	github.com/kdomanski/iso9660 v0.2.0

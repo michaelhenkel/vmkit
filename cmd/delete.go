@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	log.SetReportCaller(true)
 	rootCmd.AddCommand(deleteCmd)
 	deleteCmd.AddCommand(deleteInstanceCmd)
 }

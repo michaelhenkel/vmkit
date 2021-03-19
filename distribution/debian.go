@@ -1,7 +1,13 @@
 package distribution
 
 import (
+	"errors"
+	"os"
+
 	"github.com/michaelhenkel/vmkit/image"
+	"gopkg.in/yaml.v2"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type Debian struct {
@@ -10,20 +16,24 @@ type Debian struct {
 
 func (d *Debian) DefaultDistribution() *Debian {
 	d.Distribution.Image = &image.Image{
-		Rootfs:       "disk.raw",
-		Kernel:       "vmlinuz-4.19.0-14-amd64",
-		Initrd:       "initrd.img-4.19.0-14-amd64",
-		ImageURL:     "https://cloud.debian.org/images/cloud/buster/daily/20210316-578",
-		ImageFile:    "debian-10-generic-amd64-daily-20210316-578.tar.xz",
-		RootfsFormat: image.XZ,
-		FSLabel:      "root=UUID=e2964738-3c8b-4a26-8b61-8044940ae6c1",
+		Rootfs:        "disk.raw",
+		Kernel:        "vmlinuz-4.19.0-14-amd64",
+		Initrd:        "initrd.img-4.19.0-14-amd64",
+		ImageURL:      "https://cloud.debian.org/images/cloud/buster/daily/20210316-578",
+		ImageFile:     "debian-10-generic-amd64-daily-20210316-578.tar.xz",
+		BootPartition: "/dev/sda1",
+		DefaultUser:   "debian",
 	}
 	return d
 }
 
 func (d *Debian) GetImage() *image.Image {
+	d.Distribution.Type = DebianDist
 	if d.Image == nil {
 		return d.DefaultDistribution().Image
+	}
+	if d.Image.BootPartition == "" {
+		d.Image.BootPartition = "/dev/sda1"
 	}
 	return d.Image
 }
@@ -47,9 +57,10 @@ func (d *Debian) CreateImages(img *image.Image, distroPath string) error {
 	}
 	if !kernelImageExists {
 		getKernelCmd := []string{
-			"--ro", "-a", "/disk/disk.raw", "-i", "copy-out", "/boot/vmlinuz-4.19.0-14-amd64", "/disk",
+			"--ro", "-a", "/disk/disk.raw", "-i", "copy-out", "/boot/" + img.Kernel, "/disk",
 		}
-		if err := DockerRun(getKernelCmd, nil, distroPath); err != nil {
+		log.Infof("extracting kernel image %s/%s\n", distroPath, img.Kernel)
+		if _, err := DockerRun(getKernelCmd, nil, distroPath); err != nil {
 			return err
 		}
 	}
@@ -59,11 +70,32 @@ func (d *Debian) CreateImages(img *image.Image, distroPath string) error {
 	}
 	if !initrdExists {
 		getInitrdCmd := []string{
-			"--ro", "-a", "/disk/disk.raw", "-i", "copy-out", "/boot/initrd.img-4.19.0-14-amd64", "/disk",
+			"--ro", "-a", "/disk/disk.raw", "-i", "copy-out", "/boot/" + img.Initrd, "/disk",
 		}
-		if err := DockerRun(getInitrdCmd, nil, distroPath); err != nil {
+		log.Infof("extracting initrd image %s/%s\n", distroPath, img.Initrd)
+		if _, err := DockerRun(getInitrdCmd, nil, distroPath); err != nil {
 			return err
 		}
+	}
+	getFSLabelCmd := []string{
+		"--ro", "-a", "/disk/disk.raw", "-i", "vfs-uuid", img.BootPartition,
+	}
+	log.Info("reading fs label")
+	stdOut, err := DockerRun(getFSLabelCmd, nil, distroPath)
+	if err != nil {
+		return err
+	}
+	if stdOut == "" {
+		return errors.New("cannot find fs label")
+	}
+	img.FSLabel = "root=UUID=" + stdOut
+	img.DefaultUser = d.GetDefaultUser()
+	imageYaml, err := yaml.Marshal(img)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(distroPath+"/image.yaml", imageYaml, 0660); err != nil {
+		return err
 	}
 	return nil
 }

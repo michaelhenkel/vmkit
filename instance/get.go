@@ -12,7 +12,7 @@ func (i *Instance) Get() error {
 	if err != nil {
 		return err
 	}
-	directory := fmt.Sprintf("%s/.vmkit/%s", usr.HomeDir, i.Name)
+	directory := fmt.Sprintf("%s/.vmkit/instances/%s", usr.HomeDir, i.Name)
 	i.Directory = directory
 	i.PidFile = directory + "/hyperkit.pid"
 

@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	log.SetReportCaller(true)
 	rootCmd.AddCommand(createCmd)
 	createCmd.AddCommand(createDistributionCmd)
 	/*

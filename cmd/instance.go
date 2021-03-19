@@ -10,10 +10,10 @@ import (
 )
 
 func init() {
-	log.SetReportCaller(true)
 	createCmd.AddCommand(createInstanceCmd)
 	createInstanceCmd.Flags().StringVarP(&name, "name", "n", "", "-name of the instance")
 	createInstanceCmd.Flags().StringVarP(&distroType, "type", "t", "Debian", "type of the distribution")
+	createInstanceCmd.Flags().StringVarP(&distroName, "distro", "d", "default", "name of the distribution")
 	createInstanceCmd.Flags().IntVarP(&cpu, "cpu", "c", 2, "number of cpus")
 	createInstanceCmd.Flags().IntVarP(&memory, "memory", "m", 2048, "amount of memory")
 	createInstanceCmd.MarkFlagRequired("name")
@@ -31,9 +31,13 @@ var createInstanceCmd = &cobra.Command{
 	Short: "creates an instance",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
+		distro := &distribution.Distribution{
+			Type: distribution.DistributionType(distroType),
+			Name: distroName,
+		}
 		inst := &instance.Instance{
 			Name:         name,
-			Distribution: distribution.DistributionType(distroType),
+			Distribution: distro,
 			CPU:          cpu,
 			Memory:       memory,
 		}

@@ -10,16 +10,12 @@ const (
 )
 
 type Image struct {
-	Rootfs       string
-	Kernel       string
-	Initrd       string
-	ImageURL     string
-	RootfsFormat Format
-	ImageFile    string
-	FSLabel      string
-}
-
-// CreateImage creates an image
-func CreateImage(distribution string) {
-
+	Rootfs        string `yaml:"rootfs"`
+	Kernel        string `yaml:"kernel"`
+	Initrd        string `yaml:"initrd"`
+	ImageURL      string `yaml:"imageURL"`
+	ImageFile     string `yaml:"imageFile"`
+	BootPartition string `yaml:"bootPartition"`
+	FSLabel       string `yaml:"fsLabel"`
+	DefaultUser   string `yaml:"defaultUser"`
 }

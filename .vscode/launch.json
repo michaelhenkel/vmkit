@@ -18,7 +18,7 @@
             "request": "launch",
             "mode": "debug",
             "program": "${workspaceFolder}",
-            "args": ["create","instance","-n","n1"]
+            "args": ["create","instance","-n","i1","-t","Debian"]
         },
         {
             "name": "create distro",
@@ -26,7 +26,15 @@
             "request": "launch",
             "mode": "debug",
             "program": "${workspaceFolder}",
-            "args": ["create","distribution","-n","default","-t","Debian"]
+            "args": ["create","distribution","-n","deb1","-t","Debian","-i","${workspaceFolder}/distro1.yaml"]
+        },
+        {
+            "name": "create debian default distro",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}",
+            "args": ["create","distribution","-t","Debian"]
         }
     ]
 }

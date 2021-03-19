@@ -2,15 +2,21 @@ package distribution
 
 import (
 	"archive/tar"
+	"errors"
 	"fmt"
 	"io"
-	"log"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 
+	"github.com/h2non/filetype"
 	"github.com/michaelhenkel/vmkit/environment"
 	"github.com/michaelhenkel/vmkit/image"
 	"github.com/xi2/xz"
+	"gopkg.in/yaml.v2"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type DistributionType string
@@ -39,7 +45,30 @@ const (
 	FedoraDist DistributionType = "Fedora"
 )
 
-func Create(di DistributionInterface, env *environment.Environment) error {
+func (d *Distribution) GetImage(env *environment.Environment) error {
+	distroPath := fmt.Sprintf("%s/%s/%s", env.BasePath, d.Type, d.Name)
+	_, err := DistributionDirectoryExists(distroPath)
+	if err != nil {
+		return err
+	}
+	_, err = DistributionDirectoryExists(distroPath + "/image.yaml")
+	if err != nil {
+		return err
+	}
+	imageByte, err := os.ReadFile(distroPath + "/image.yaml")
+	if err != nil {
+		return err
+	}
+	img := &image.Image{}
+	if err := yaml.Unmarshal(imageByte, img); err != nil {
+		return err
+	}
+	d.Image = img
+
+	return nil
+}
+
+func (d *Distribution) Create(di DistributionInterface, env *environment.Environment) error {
 	distroImage := di.GetImage()
 	distro := di.GetDistribution()
 	distroPath := fmt.Sprintf("%s/%s/%s", env.BasePath, distro, di.GetName())
@@ -68,6 +97,9 @@ func Create(di DistributionInterface, env *environment.Environment) error {
 	}
 
 	if err := di.CreateImages(distroImage, distroPath); err != nil {
+		return err
+	}
+	if err := chownR(filepath.Dir(distroPath), os.Getuid(), os.Getgid()); err != nil {
 		return err
 	}
 	return nil
@@ -129,6 +161,7 @@ func DistributionDirectoryExists(distributionPath string) (bool, error) {
 }
 
 func DistributionDownload(url string, file string, path string) error {
+	log.Infof("downloading image %s\n", url+"/"+file)
 	resp, err := http.Get(url + "/" + file)
 	if err != nil {
 		return err
@@ -148,8 +181,13 @@ func DistributionDownload(url string, file string, path string) error {
 }
 
 func ExtractImage(img *image.Image, distroPath string) error {
-	switch img.RootfsFormat {
-	case image.XZ:
+	buf, _ := ioutil.ReadFile(distroPath + "/" + img.ImageFile)
+	kind, _ := filetype.Match(buf)
+	if kind == filetype.Unknown {
+		return errors.New("Unknown file type")
+	}
+	switch kind.Extension {
+	case "xz":
 		if err := extractXZ(distroPath, img.ImageFile); err != nil {
 			return err
 		}
@@ -158,7 +196,6 @@ func ExtractImage(img *image.Image, distroPath string) error {
 }
 
 func extractXZ(path string, xzFile string) error {
-	log.Println(xzFile)
 	f, err := os.Open(path + "/" + xzFile)
 	if err != nil {
 		return err
@@ -190,7 +227,7 @@ func extractXZ(path string, xzFile string) error {
 			}
 		default:
 			// write a file
-			fmt.Println("extracting: " + path + "/" + hdr.Name)
+			log.Info("extracting rootfs " + path + "/" + hdr.Name)
 			w, err := os.Create(path + "/" + hdr.Name)
 			if err != nil {
 				return err
@@ -204,4 +241,13 @@ func extractXZ(path string, xzFile string) error {
 	}
 	f.Close()
 	return nil
+}
+
+func chownR(path string, uid, gid int) error {
+	return filepath.Walk(path, func(name string, info os.FileInfo, err error) error {
+		if err == nil {
+			err = os.Chown(name, uid, gid)
+		}
+		return err
+	})
 }
