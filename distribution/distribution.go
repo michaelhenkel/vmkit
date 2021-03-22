@@ -46,7 +46,7 @@ const (
 )
 
 func (d *Distribution) GetImage(env *environment.Environment) error {
-	distroPath := fmt.Sprintf("%s/%s/%s", env.BasePath, d.Type, d.Name)
+	distroPath := fmt.Sprintf("%s/%s/%s", env.ImagePath, d.Type, d.Name)
 	_, err := DistributionDirectoryExists(distroPath)
 	if err != nil {
 		return err
@@ -71,7 +71,7 @@ func (d *Distribution) GetImage(env *environment.Environment) error {
 func (d *Distribution) Create(di DistributionInterface, env *environment.Environment) error {
 	distroImage := di.GetImage()
 	distro := di.GetDistribution()
-	distroPath := fmt.Sprintf("%s/%s/%s", env.BasePath, distro, di.GetName())
+	distroPath := fmt.Sprintf("%s/%s/%s", env.ImagePath, distro, di.GetName())
 	_, err := DistributionDirectoryExists(distroPath)
 	if err != nil {
 		return err

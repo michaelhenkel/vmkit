@@ -2,13 +2,8 @@ package instance
 
 import (
 	"bufio"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -26,7 +21,6 @@ import (
 	"github.com/michaelhenkel/vmkit/environment"
 	"github.com/pborman/uuid"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/crypto/ssh"
 
 	ps "github.com/mitchellh/go-ps"
 	hyperkit "github.com/moby/hyperkit/go"
@@ -55,17 +49,33 @@ type Instance struct {
 	UUID         string
 	CPU          int
 	Memory       int
+	ResultCh     chan Result
+}
+
+type Result struct {
+	Instance *Instance
+	Error    error
 }
 
 func init() {
 	hyperkit.SetLogger(&logrus.Logger{Level: logrus.Level(1)})
 }
 
-func (i *Instance) Setup() error {
+func (i *Instance) returnResult(err error) {
+	r := Result{
+		Instance: i,
+		Error:    err,
+	}
+	i.ResultCh <- r
+	close(i.ResultCh)
+	return
+}
 
+func (i *Instance) Setup() {
 	usr, err := user.Current()
 	if err != nil {
-		return err
+		i.returnResult(err)
+		return
 	}
 	directory := fmt.Sprintf("%s/.vmkit/instances/%s", usr.HomeDir, i.Name)
 	i.Directory = directory
@@ -73,37 +83,45 @@ func (i *Instance) Setup() error {
 
 	env, err := environment.Create()
 	if err != nil {
-		return err
+		i.returnResult(err)
+		return
 	}
 	i.Environmnet = env
 
 	if err := i.Distribution.GetImage(env); err != nil {
-		return err
+		i.returnResult(err)
+		return
 	}
 
 	envExists, err := i.exists()
 	if err != nil {
-		return err
+		i.returnResult(err)
+		return
 	}
 	if !envExists {
 		if err := i.createEnvironment(); err != nil {
-			return err
+			i.returnResult(err)
+			return
 		}
 	} else {
 		isActive, err := i.active()
 		if err != nil {
-			return err
+			i.returnResult(err)
+			return
 		}
 		if isActive {
-			return fmt.Errorf("instance is already active")
+			i.returnResult(fmt.Errorf("instance is already active"))
+			return
 		}
 	}
 	i.UUID = uuid.NewUUID().String()
 	i.CmdLine = i.Distribution.Image.FSLabel + " loglevel=3 console=ttyS0 console=tty0 noembed nomodeset norestore waitusb=10 systemd.legacy_systemd_cgroup_controller=yes random.trust_cpu=on hw_rng_model=virtio base host=" + i.Name
 	if err := i.create(); err != nil {
-		return err
+		i.returnResult(err)
+		return
 	}
-	return nil
+	i.returnResult(nil)
+	return
 }
 
 func (i *Instance) create() error {
@@ -111,7 +129,7 @@ func (i *Instance) create() error {
 	kernel := i.Distribution.Image.Kernel
 	rootfs := i.Distribution.Image.Rootfs
 
-	distroPath := i.Environmnet.BasePath + "/" + string(i.Distribution.Type) + "/" + i.Distribution.Name
+	distroPath := i.Environmnet.ImagePath + "/" + string(i.Distribution.Type) + "/" + i.Distribution.Name
 	rootfsExists, err := distribution.FileDirectoryExists(i.Directory + "/" + rootfs)
 	if err != nil {
 		return err
@@ -192,7 +210,7 @@ func (i *Instance) create() error {
 		return err
 	}
 
-	fmt.Printf("ssh -o IdentitiesOnly=yes -i %s %s@%s\n", i.Directory+"/id_rsa", i.Distribution.Image.DefaultUser, i.IPAddress)
+	//fmt.Printf("ssh -o IdentitiesOnly=yes -i %s %s@%s\n", i.Directory+"/id_rsa", i.Distribution.Image.DefaultUser, i.IPAddress)
 
 	return nil
 }
@@ -343,21 +361,7 @@ type metaData struct {
 }
 
 func (i *Instance) createCloudInit() error {
-	privateKeyExists, err := distribution.FileDirectoryExists(i.Directory + "/private.pem")
-	if err != nil {
-		return err
-	}
-	publicKeyExists, err := distribution.FileDirectoryExists(i.Directory + "/public.pem")
-	if err != nil {
-		return err
-	}
-	if !privateKeyExists || publicKeyExists {
-		if err := i.generateKeys(); err != nil {
-			return err
-		}
-	}
-
-	publicKey, err := os.ReadFile(i.Directory + "/id_rsa.pub")
+	publicKey, err := os.ReadFile(i.Environmnet.KeyPath + "/id_rsa.pub")
 	if err != nil {
 		return err
 	}
@@ -463,89 +467,6 @@ func (i *Instance) createISO() error {
 		return err
 	}
 
-	return nil
-}
-
-func (i *Instance) generateKeys() error {
-	savePrivateFileTo := i.Directory + "/id_rsa"
-	savePublicFileTo := i.Directory + "/id_rsa.pub"
-	bitSize := 4096
-
-	privateKey, err := generatePrivateKey(bitSize)
-	if err != nil {
-		return err
-	}
-
-	publicKeyBytes, err := generatePublicKey(&privateKey.PublicKey)
-	if err != nil {
-		return err
-	}
-
-	privateKeyBytes := encodePrivateKeyToPEM(privateKey)
-
-	err = writeKeyToFile(privateKeyBytes, savePrivateFileTo)
-	if err != nil {
-		return err
-	}
-
-	err = writeKeyToFile([]byte(publicKeyBytes), savePublicFileTo)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// generatePrivateKey creates a RSA Private Key of specified byte size
-func generatePrivateKey(bitSize int) (*rsa.PrivateKey, error) {
-	// Private Key generation
-	privateKey, err := rsa.GenerateKey(rand.Reader, bitSize)
-	if err != nil {
-		return nil, err
-	}
-
-	// Validate Private Key
-	err = privateKey.Validate()
-	if err != nil {
-		return nil, err
-	}
-	return privateKey, nil
-}
-
-// encodePrivateKeyToPEM encodes Private Key from RSA to PEM format
-func encodePrivateKeyToPEM(privateKey *rsa.PrivateKey) []byte {
-	// Get ASN.1 DER format
-	privDER := x509.MarshalPKCS1PrivateKey(privateKey)
-
-	// pem.Block
-	privBlock := pem.Block{
-		Type:    "RSA PRIVATE KEY",
-		Headers: nil,
-		Bytes:   privDER,
-	}
-
-	// Private key in PEM format
-	privatePEM := pem.EncodeToMemory(&privBlock)
-
-	return privatePEM
-}
-
-// generatePublicKey take a rsa.PublicKey and return bytes suitable for writing to .pub file
-// returns in the format "ssh-rsa ..."
-func generatePublicKey(privatekey *rsa.PublicKey) ([]byte, error) {
-	publicRsaKey, err := ssh.NewPublicKey(privatekey)
-	if err != nil {
-		return nil, err
-	}
-	pubKeyBytes := ssh.MarshalAuthorizedKey(publicRsaKey)
-	return pubKeyBytes, nil
-}
-
-// writePemToFile writes keys to a file
-func writeKeyToFile(keyBytes []byte, saveFileTo string) error {
-	err := ioutil.WriteFile(saveFileTo, keyBytes, 0600)
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
