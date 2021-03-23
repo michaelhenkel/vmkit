@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/h2non/filetype"
 	"github.com/michaelhenkel/vmkit/environment"
@@ -32,7 +33,6 @@ type DistributionInterface interface {
 	GetName() string
 	GetImage() *image.Image
 	GetDistribution() DistributionType
-	CreateImages(*image.Image, string) error
 	GetDefaultUser() string
 }
 
@@ -96,10 +96,70 @@ func (d *Distribution) Create(di DistributionInterface, env *environment.Environ
 		}
 	}
 
-	if err := di.CreateImages(distroImage, distroPath); err != nil {
+	kernelImageExists, err := KernelImageExists(distroPath, distroImage)
+	if err != nil {
 		return err
 	}
+
+	initrdImageExists, err := InitrdExists(distroPath, distroImage)
+	if err != nil {
+		return err
+	}
+
+	if !kernelImageExists || !initrdImageExists {
+		if err := ExtractKernelInitrd(distroPath, distroImage.ImageFile); err != nil {
+			return err
+		}
+	}
+	/*
+		if err := GetFSLable(distroPath, distroImage); err != nil {
+			return err
+		}
+	*/
+	if err := CreateYAML(distroImage, di.GetDefaultUser(), distroPath); err != nil {
+		return err
+	}
+
 	if err := chownR(filepath.Dir(distroPath), os.Getuid(), os.Getgid()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func CreateYAML(img *image.Image, defaultUser, distroPath string) error {
+	img.DefaultUser = defaultUser
+	imageYaml, err := yaml.Marshal(img)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(distroPath+"/image.yaml", imageYaml, 0660); err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetFSLable(distroPath string, img *image.Image) error {
+	getFSLabelCmd := []string{
+		"--ro", "-a", "/disk/" + img.Rootfs, "-i", "vfs-uuid", img.BootPartition,
+	}
+	log.Info("reading fs label")
+	stdOut, err := DockerRun(getFSLabelCmd, []string{"guestfish"}, distroPath)
+	if err != nil {
+		return err
+	}
+	if stdOut == "" {
+		return errors.New("cannot find fs label")
+	}
+	img.FSLabel = "root=UUID=" + stdOut
+	return nil
+}
+
+func ExtractKernelInitrd(distroPath, distroImage string) error {
+	cmd := []string{
+		"--unversioned-names", "-a", "/disk/" + distroImage,
+	}
+	log.Infof("extracting initrd and kernel image %s/%s\n", distroPath, distroImage)
+	if _, err := DockerRun(cmd, []string{"virt-get-kernel"}, distroPath); err != nil {
 		return err
 	}
 	return nil
@@ -183,14 +243,31 @@ func DistributionDownload(url string, file string, path string) error {
 func ExtractImage(img *image.Image, distroPath string) error {
 	buf, _ := ioutil.ReadFile(distroPath + "/" + img.ImageFile)
 	kind, _ := filetype.Match(buf)
-	if kind == filetype.Unknown {
-		return errors.New("Unknown file type")
-	}
+	//if kind == filetype.Unknown {
+	//	return errors.New("Unknown file type")
+	//}
 	switch kind.Extension {
 	case "xz":
 		if err := extractXZ(distroPath, img.ImageFile); err != nil {
 			return err
 		}
+		/*
+			case "qcow2":
+				if err := convertToRaw(img.ImageFile, distroPath); err != nil {
+					return err
+				}
+		*/
+
+	}
+	return nil
+}
+
+func convertToRaw(image, distroPath string) error {
+	convertRawArgs := []string{
+		"convert", "/disk/" + image, "/disk/" + strings.TrimSuffix(image, filepath.Ext(image)) + ".raw",
+	}
+	if _, err := DockerRun(convertRawArgs, []string{"qemu-img"}, distroPath); err != nil {
+		return err
 	}
 	return nil
 }

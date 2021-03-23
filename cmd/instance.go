@@ -89,7 +89,7 @@ var createInstanceCmd = &cobra.Command{
 		for _, ch := range resultSlice {
 			for res := range ch {
 				if res.Error == nil {
-					log.Infof("ssh -o IdentitiesOnly=yes -i %s %s@%s\n", env.KeyPath+"/id_rsa", res.Instance.Distribution.Image.DefaultUser, res.Instance.IPAddress)
+					log.Infof("%s: ssh -o IdentitiesOnly=yes -i %s %s@%s\n", res.Instance.Name, env.KeyPath+"/id_rsa", res.Instance.Distribution.Image.DefaultUser, res.Instance.IPAddress)
 				} else {
 					log.Errorf("Instance %s error %s", res.Instance.Name, res.Error)
 				}

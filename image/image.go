@@ -4,9 +4,10 @@ type Distribution string
 type Format string
 
 const (
-	XZ  Format = "xz"
-	IMG Format = "img"
-	RAW Format = "raw"
+	XZ    Format = "xz"
+	IMG   Format = "img"
+	RAW   Format = "raw"
+	QCOW2 Format = "qcow2"
 )
 
 type Image struct {
@@ -18,4 +19,5 @@ type Image struct {
 	BootPartition string `yaml:"bootPartition"`
 	FSLabel       string `yaml:"fsLabel"`
 	DefaultUser   string `yaml:"defaultUser"`
+	ImageFormat   string `yaml:"imageFormat"`
 }

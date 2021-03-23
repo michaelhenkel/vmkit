@@ -74,6 +74,13 @@ var createDistributionCmd = &cobra.Command{
 				debian.Distribution.Image = distro.Image
 			}
 			dI = debian
+		case distribution.CentosDist:
+			centos := &distribution.Centos{}
+			centos.Distribution = distro
+			if distro.Image != nil {
+				centos.Distribution.Image = distro.Image
+			}
+			dI = centos
 		}
 
 		if err := distro.Create(dI, env); err != nil {

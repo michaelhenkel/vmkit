@@ -47,15 +47,16 @@ func DockerRun(cmd, entrypoint []string, directory string) (string, error) {
 		return "", err
 	}
 
-	_, err = cli.ImagePull(ctx, "djui/guestfs:latest", types.ImagePullOptions{})
+	_, err = cli.ImagePull(ctx, "leibniz9999/libguestfs-tools:latest", types.ImagePullOptions{})
 	if err != nil {
 		return "", err
 	}
 	//io.Copy(os.Stdout, reader)
 	containerConfig := &container.Config{
-		Image: "djui/guestfs:latest",
-		Cmd:   cmd,
-		Tty:   true,
+		Image:      "leibniz9999/libguestfs-tools:latest",
+		Cmd:        cmd,
+		Tty:        true,
+		WorkingDir: "/disk",
 	}
 	if entrypoint != nil {
 		containerConfig.Entrypoint = entrypoint

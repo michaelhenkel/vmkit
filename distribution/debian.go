@@ -17,12 +17,13 @@ type Debian struct {
 func (d *Debian) DefaultDistribution() *Debian {
 	d.Distribution.Image = &image.Image{
 		Rootfs:        "disk.raw",
-		Kernel:        "vmlinuz-4.19.0-14-amd64",
-		Initrd:        "initrd.img-4.19.0-14-amd64",
+		Kernel:        "vmlinuz",
+		Initrd:        "initrd.img",
 		ImageURL:      "https://cloud.debian.org/images/cloud/buster/daily/20210316-578",
 		ImageFile:     "debian-10-generic-amd64-daily-20210316-578.tar.xz",
 		BootPartition: "/dev/sda1",
 		DefaultUser:   "debian",
+		ImageFormat:   "raw",
 	}
 	return d
 }

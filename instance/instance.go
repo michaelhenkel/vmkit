@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -19,12 +20,13 @@ import (
 	"github.com/kdomanski/iso9660"
 	"github.com/michaelhenkel/vmkit/distribution"
 	"github.com/michaelhenkel/vmkit/environment"
+	"github.com/michaelhenkel/vmkit/image"
+	"github.com/michaelhenkel/vmkit/vmnet"
 	"github.com/pborman/uuid"
 	"github.com/sirupsen/logrus"
 
 	ps "github.com/mitchellh/go-ps"
 	hyperkit "github.com/moby/hyperkit/go"
-	vmnet "github.com/zchee/go-vmnet"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -59,6 +61,7 @@ type Result struct {
 
 func init() {
 	hyperkit.SetLogger(&logrus.Logger{Level: logrus.Level(1)})
+	rand.Seed(time.Now().UnixNano())
 }
 
 func (i *Instance) returnResult(err error) {
@@ -115,7 +118,8 @@ func (i *Instance) Setup() {
 		}
 	}
 	i.UUID = uuid.NewUUID().String()
-	i.CmdLine = i.Distribution.Image.FSLabel + " loglevel=3 console=ttyS0 console=tty0 noembed nomodeset norestore waitusb=10 systemd.legacy_systemd_cgroup_controller=yes random.trust_cpu=on hw_rng_model=virtio base host=" + i.Name
+	//i.CmdLine = i.Distribution.Image.FSLabel + " loglevel=3 console=ttyS0 console=tty0 noembed nomodeset norestore waitusb=10 systemd.legacy_systemd_cgroup_controller=yes random.trust_cpu=on hw_rng_model=virtio base host=" + i.Name
+	i.CmdLine = "earlyprintk=serial console=ttyS0 root=/dev/vda1 rw panic=1 no_timer_check base host=" + i.Name
 	if err := i.create(); err != nil {
 		i.returnResult(err)
 		return
@@ -135,7 +139,12 @@ func (i *Instance) create() error {
 		return err
 	}
 	if !rootfsExists {
-		if err := copy(distroPath+"/"+rootfs, i.Directory+"/"+rootfs); err != nil {
+		if i.Distribution.Image.ImageFormat == string(image.QCOW2) {
+			cmd := exec.Command("qemu-img", "convert", distroPath+"/"+i.Distribution.Image.ImageFile, i.Directory+"/"+i.Distribution.Image.Rootfs)
+			if err := cmd.Run(); err != nil {
+				return err
+			}
+		} else if err := copy(distroPath+"/"+rootfs, i.Directory+"/"+rootfs); err != nil {
 			return err
 		}
 	}
@@ -182,18 +191,26 @@ func (i *Instance) create() error {
 		return err
 	}
 
-	mac, err := GetMACAddressFromUUID(i.UUID)
+	//mac, err := GetMACAddressFromUUID(i.UUID)
+
+	mac, err := retryMacAddress(5, 1, GetMACAddressFromUUID, i.UUID)
 	if err != nil {
+		fmt.Println("ERRRRRR")
 		return err
 	}
 
 	// Need to strip 0's
 	mac = trimMacAddress(mac)
 
-	_, err = h.Start(i.CmdLine)
-	if err != nil {
+	if err := retryStart(3, 1, hyperkitStart, h, i.CmdLine); err != nil {
 		return err
 	}
+	/*
+		_, err = h.Start(i.CmdLine)
+		if err != nil {
+			return err
+		}
+	*/
 
 	if err := i.setupIP(mac); err != nil {
 		return err
@@ -213,6 +230,15 @@ func (i *Instance) create() error {
 	//fmt.Printf("ssh -o IdentitiesOnly=yes -i %s %s@%s\n", i.Directory+"/id_rsa", i.Distribution.Image.DefaultUser, i.IPAddress)
 
 	return nil
+}
+
+func hyperkitStart(h *hyperkit.HyperKit, cmdline string) error {
+	_, err := h.Start(cmdline)
+	fmt.Printf("%+v\n", h)
+	if err != nil {
+		return err
+	}
+	return err
 }
 
 func chownR(path string, uid, gid int) error {
@@ -259,14 +285,31 @@ func (i *Instance) createInstance() (*hyperkit.HyperKit, error) {
 			h.VSockPorts = vsockPorts
 		}
 	*/
-
-	h.Disks = []hyperkit.Disk{
-		&hyperkit.RawDisk{
-			Path: i.Directory + "/" + i.Distribution.Image.Rootfs,
-			Size: 2048,
-			Trim: true,
-		},
+	var disk hyperkit.Disk
+	disk = &hyperkit.RawDisk{
+		Path: i.Directory + "/" + i.Distribution.Image.Rootfs,
+		Size: 2048,
+		Trim: true,
 	}
+	/*
+		fmt.Println(i.Distribution.Image)
+		switch i.Distribution.Image.ImageFormat {
+		case string(image.QCOW2):
+			disk = &hyperkit.QcowDisk{
+				Path: i.Directory + "/" + i.Distribution.Image.Rootfs,
+				Size: 2048,
+				Trim: true,
+			}
+		case string(image.RAW):
+			disk = &hyperkit.RawDisk{
+				Path: i.Directory + "/" + i.Distribution.Image.Rootfs,
+				Size: 2048,
+				Trim: true,
+			}
+		}
+	*/
+
+	h.Disks = []hyperkit.Disk{disk}
 
 	return h, err
 }
@@ -639,4 +682,53 @@ func GetNetAddr() (net.IP, error) {
 		return nil, fmt.Errorf("could not get the network address for vmnet")
 	}
 	return ip, nil
+}
+
+func retryStart(attempts int, sleep time.Duration, f func(*hyperkit.HyperKit, string) error, h *hyperkit.HyperKit, cmdLine string) error {
+	if err := f(h, cmdLine); err != nil {
+		fmt.Println("error retrying", err)
+		if s, ok := err.(stop); ok {
+			// Return the original error for later checking
+			return s.error
+		}
+
+		if attempts--; attempts > 0 {
+			// Add some randomness to prevent creating a Thundering Herd
+			jitter := time.Duration(rand.Int63n(int64(sleep)))
+			sleep = sleep + jitter/2
+
+			time.Sleep(sleep)
+			return retryStart(attempts, 2*sleep, f, h, cmdLine)
+		}
+		return err
+	}
+
+	return nil
+}
+
+func retryMacAddress(attempts int, sleep time.Duration, f func(string) (string, error), uuid string) (string, error) {
+	var mac string
+	var err error
+	if mac, err = f(uuid); err != nil {
+		if s, ok := err.(stop); ok {
+			// Return the original error for later checking
+			return "", s.error
+		}
+
+		if attempts--; attempts > 0 {
+			// Add some randomness to prevent creating a Thundering Herd
+			jitter := time.Duration(rand.Int63n(int64(sleep)))
+			sleep = sleep + jitter/2
+
+			time.Sleep(sleep)
+			return retryMacAddress(attempts, 2*sleep, f, uuid)
+		}
+		return "", err
+	}
+
+	return mac, nil
+}
+
+type stop struct {
+	error
 }
