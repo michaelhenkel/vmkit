@@ -195,7 +195,6 @@ func (i *Instance) create() error {
 
 	mac, err := retryMacAddress(5, 1, GetMACAddressFromUUID, i.UUID)
 	if err != nil {
-		fmt.Println("ERRRRRR")
 		return err
 	}
 
@@ -234,7 +233,6 @@ func (i *Instance) create() error {
 
 func hyperkitStart(h *hyperkit.HyperKit, cmdline string) error {
 	_, err := h.Start(cmdline)
-	fmt.Printf("%+v\n", h)
 	if err != nil {
 		return err
 	}
@@ -686,7 +684,6 @@ func GetNetAddr() (net.IP, error) {
 
 func retryStart(attempts int, sleep time.Duration, f func(*hyperkit.HyperKit, string) error, h *hyperkit.HyperKit, cmdLine string) error {
 	if err := f(h, cmdLine); err != nil {
-		fmt.Println("error retrying", err)
 		if s, ok := err.(stop); ok {
 			// Return the original error for later checking
 			return s.error
