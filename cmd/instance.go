@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -20,21 +21,20 @@ import (
 
 func init() {
 	createCmd.AddCommand(createInstanceCmd)
-	createInstanceCmd.Flags().StringVarP(&name, "name", "n", "", "-name of the instance")
-	createInstanceCmd.Flags().StringVarP(&distroType, "type", "t", "Debian", "type of the distribution")
-	createInstanceCmd.Flags().StringVarP(&distroName, "distro", "d", "default", "name of the distribution")
+
 	createInstanceCmd.Flags().IntVarP(&cpu, "cpu", "c", 2, "number of cpus")
 	createInstanceCmd.Flags().IntVarP(&scale, "scale", "s", 1, "number of instances")
 	createInstanceCmd.Flags().IntVarP(&memory, "memory", "m", 2048, "amount of memory")
+	createInstanceCmd.Flags().StringVarP(&distroName, "distro", "d", "", "name of the distro")
 	createInstanceCmd.MarkFlagRequired("name")
-	deleteInstanceCmd.Flags().StringVarP(&name, "name", "n", "", "-name of the instance")
 	deleteInstanceCmd.MarkFlagRequired("name")
 }
 
 var (
-	cpu    int
-	memory int
-	scale  int
+	cpu        int
+	memory     int
+	scale      int
+	distroName string
 )
 
 var createInstanceCmd = &cobra.Command{
@@ -43,6 +43,9 @@ var createInstanceCmd = &cobra.Command{
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		resultSlice := []chan instance.Result{}
+		if distroType == "" {
+			distroType = string(distribution.DebianDist)
+		}
 		distro := &distribution.Distribution{
 			Type: distribution.DistributionType(distroType),
 			Name: distroName,
@@ -73,6 +76,9 @@ var createInstanceCmd = &cobra.Command{
 			if scale > 1 {
 				instanceName = name + "-" + strconv.Itoa(i)
 			}
+			for j := 0; j == i; j++ {
+				fmt.Println("instance", instanceName)
+			}
 			ch := make(chan instance.Result)
 			resultSlice = append(resultSlice, ch)
 			inst := &instance.Instance{
@@ -82,7 +88,6 @@ var createInstanceCmd = &cobra.Command{
 				Memory:       memory,
 				ResultCh:     ch,
 			}
-			log.Infof("creating instance %s", instanceName)
 			go inst.Setup()
 		}
 
@@ -197,4 +202,27 @@ func writeKeyToFile(keyBytes []byte, saveFileTo string) error {
 		return err
 	}
 	return nil
+}
+
+var getInstanceCmd = &cobra.Command{
+	Use:   "instance",
+	Short: "gets a insstance",
+	Long:  ``,
+	Run: func(cmd *cobra.Command, args []string) {
+		env, err := environment.Create()
+		if err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+		inst := &instance.Instance{
+			Environmnet: env,
+		}
+		if name != "" {
+			inst.Name = name
+		}
+		if err := inst.Get(); err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+	},
 }

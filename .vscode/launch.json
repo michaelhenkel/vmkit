@@ -44,6 +44,22 @@
             "mode": "debug",
             "program": "${workspaceFolder}",
             "args": ["create","distribution","-t","Centos"]
+        } ,
+        {
+            "name": "create centos from url",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}",
+            "args": ["create","distribution","-t","Centos","-n","centos1","-u","https://cloud.centos.org/centos/8/x86_64/images/CentOS-8-GenericCloud-8.3.2011-20201204.2.x86_64.qcow2"]
+        },
+        {
+            "name": "create centos centos1 instance",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}",
+            "args": ["create","instance","-t","Centos","-n","centos1","-d","centos1"]
         }
     ]
 }

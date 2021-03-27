@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	github.com/Microsoft/go-winio v0.4.16 // indirect
+	github.com/briandowns/spinner v1.12.0 // indirect
 	github.com/containerd/containerd v1.4.4 // indirect
 	github.com/docker/distribution v2.7.1+incompatible // indirect
 	github.com/docker/docker v20.10.5+incompatible
@@ -15,6 +16,8 @@ require (
 	github.com/google/uuid v1.2.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/h2non/filetype v1.1.1 // indirect
+	github.com/janeczku/go-spinner v0.0.0-20150530144529-cf8ef1d64394 // indirect
+	github.com/jedib0t/go-pretty/v6 v6.1.0 // indirect
 	github.com/juju/juju v0.0.0-20210316233007-efc2dc644511
 	github.com/juju/utils/v2 v2.0.0-20210305225158-eedbe7b6b3e2 // indirect
 	github.com/kdomanski/iso9660 v0.2.0

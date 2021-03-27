@@ -16,11 +16,10 @@ var (
 			// Do Stuff Here
 		},
 	}
-	name       string
-	distroName string
 )
 
 func init() {
+	rootCmd.AddCommand(createCmd, deleteCmd, getCmd)
 	cobra.OnInitialize(initConfig)
 }
 

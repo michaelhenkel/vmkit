@@ -2,6 +2,7 @@ package instance
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -13,20 +14,25 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/docker/machine/libmachine/state"
+	spinner "github.com/janeczku/go-spinner"
 	"github.com/kdomanski/iso9660"
 	"github.com/michaelhenkel/vmkit/distribution"
 	"github.com/michaelhenkel/vmkit/environment"
-	"github.com/michaelhenkel/vmkit/image"
 	"github.com/michaelhenkel/vmkit/vmnet"
 	"github.com/pborman/uuid"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	ps "github.com/mitchellh/go-ps"
 	hyperkit "github.com/moby/hyperkit/go"
+	log "github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -41,17 +47,17 @@ const (
 )
 
 type Instance struct {
-	Name         string
-	Directory    string
-	PidFile      string
-	Distribution *distribution.Distribution
+	Name         string                     `yaml:"name"`
+	Directory    string                     `yaml:"directory"`
+	PidFile      string                     `yaml:"pidFile"`
+	Distribution *distribution.Distribution `yaml:"distribution"`
 	Environmnet  *environment.Environment
-	IPAddress    string
+	IPAddress    string `yaml:"ipAddress"`
 	CmdLine      string
 	UUID         string
-	CPU          int
-	Memory       int
-	ResultCh     chan Result
+	CPU          int         `yaml:"cpu"`
+	Memory       int         `yaml:"memory"`
+	ResultCh     chan Result `yaml:"-"`
 }
 
 type Result struct {
@@ -75,6 +81,7 @@ func (i *Instance) returnResult(err error) {
 }
 
 func (i *Instance) Setup() {
+	//log.Infof("creating instance %s", i.Name)
 	usr, err := user.Current()
 	if err != nil {
 		i.returnResult(err)
@@ -124,14 +131,66 @@ func (i *Instance) Setup() {
 		i.returnResult(err)
 		return
 	}
+
 	i.returnResult(nil)
 	return
 }
 
+func (i *Instance) updateKnownHosts(line string) error {
+	/*
+		publicKeyByte, err := os.ReadFile(i.Environmnet.KeyPath + "/id_rsa.pub")
+		if err != nil {
+			return err
+		}
+		publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyByte)
+
+		if err != nil {
+			return err
+		}
+		if err := addHostKey(i.Name, i.IPAddress, publicKey); err != nil {
+			return err
+		}
+	*/
+	publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+	if err != nil {
+		return err
+	}
+	if err := addHostKey(i.Name, i.IPAddress, publicKey); err != nil {
+		return err
+	}
+	/*
+		khFilePath := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+		f, err := os.OpenFile(khFilePath, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+	*/
+	return nil
+}
+
+func addHostKey(host string, remote string, pubKey ssh.PublicKey) error {
+	// add host key if host is not found in known_hosts, error object is return, if nil then connection proceeds,
+	// if not nil then connection stops.
+	khFilePath := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+	f, err := os.OpenFile(khFilePath, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	knownHosts := knownhosts.Normalize(remote)
+	_, err = f.WriteString(knownhosts.Line([]string{knownHosts}, pubKey) + "\n")
+	return err
+}
+
 func (i *Instance) create() error {
-	initrd := i.Distribution.Image.Initrd
-	kernel := i.Distribution.Image.Kernel
-	rootfs := i.Distribution.Image.Rootfs
+	startString := fmt.Sprintf(" %s : getting images", i.Name)
+	s := spinner.StartNew(startString)
+	s.Start()
+	initrd := "initrd"
+	kernel := "vmlinuz"
+	rootfs := "disk.raw"
 
 	distroPath := i.Environmnet.ImagePath + "/" + string(i.Distribution.Type) + "/" + i.Distribution.Name
 	rootfsExists, err := distribution.FileDirectoryExists(i.Directory + "/" + rootfs)
@@ -139,12 +198,7 @@ func (i *Instance) create() error {
 		return err
 	}
 	if !rootfsExists {
-		if i.Distribution.Image.ImageFormat == string(image.QCOW2) {
-			cmd := exec.Command("qemu-img", "convert", distroPath+"/"+i.Distribution.Image.ImageFile, i.Directory+"/"+i.Distribution.Image.Rootfs)
-			if err := cmd.Run(); err != nil {
-				return err
-			}
-		} else if err := copy(distroPath+"/"+rootfs, i.Directory+"/"+rootfs); err != nil {
+		if err := copy(distroPath+"/"+rootfs, i.Directory+"/"+rootfs); err != nil {
 			return err
 		}
 	}
@@ -182,10 +236,15 @@ func (i *Instance) create() error {
 			return err
 		}
 	}
+	s.Stop()
 
 	if err := verifyRootPermissions(); err != nil {
 		return err
 	}
+
+	startString = fmt.Sprintf(" %s : starting instance", i.Name)
+	s2 := spinner.NewSpinner(startString)
+	s2.Start()
 	h, err := i.createInstance()
 	if err != nil {
 		return err
@@ -204,6 +263,7 @@ func (i *Instance) create() error {
 	if err := retryStart(3, 1, hyperkitStart, h, i.CmdLine); err != nil {
 		return err
 	}
+	s2.Stop()
 	/*
 		_, err = h.Start(i.CmdLine)
 		if err != nil {
@@ -211,13 +271,16 @@ func (i *Instance) create() error {
 		}
 	*/
 
+	startString = fmt.Sprintf(" %s : waiting for network", i.Name)
+	s3 := spinner.NewSpinner(startString)
+	s3.Start()
 	if err := i.setupIP(mac); err != nil {
 		return err
 	}
+	s3.Stop()
 	if err := chownR(filepath.Dir(i.Directory), os.Getuid(), os.Getgid()); err != nil {
 		return err
 	}
-
 	ttyByte, err := os.ReadFile(i.Directory + "/tty")
 	if err != nil {
 		return err
@@ -225,9 +288,23 @@ func (i *Instance) create() error {
 	if err := chownR(string(ttyByte), os.Getuid(), os.Getgid()); err != nil {
 		return err
 	}
-
-	//fmt.Printf("ssh -o IdentitiesOnly=yes -i %s %s@%s\n", i.Directory+"/id_rsa", i.Distribution.Image.DefaultUser, i.IPAddress)
-
+	instYaml, err := yaml.Marshal(i)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(i.Directory+"/instance.yaml", instYaml, 0660); err != nil {
+		return err
+	}
+	if err := chownR(i.Directory+"/instance.yaml", os.Getuid(), os.Getgid()); err != nil {
+		return err
+	}
+	startString = fmt.Sprintf(" %s : waiting for ssh", i.Name)
+	s4 := spinner.NewSpinner(startString)
+	s4.Start()
+	if err := sshKeyScan(i.Distribution.Image.DefaultUser, i.IPAddress); err != nil {
+		return err
+	}
+	s4.Stop()
 	return nil
 }
 
@@ -266,8 +343,8 @@ func (i *Instance) createInstance() (*hyperkit.HyperKit, error) {
 		return nil, err
 	}
 
-	h.Kernel = i.Directory + "/" + i.Distribution.Image.Kernel
-	h.Initrd = i.Directory + "/" + i.Distribution.Image.Initrd
+	h.Kernel = i.Directory + "/vmlinuz"
+	h.Initrd = i.Directory + "/initrd"
 	h.VMNet = true
 	h.ISOImages = []string{i.Directory + "/cidata.iso"}
 	h.Console = hyperkit.ConsoleFile
@@ -285,7 +362,7 @@ func (i *Instance) createInstance() (*hyperkit.HyperKit, error) {
 	*/
 	var disk hyperkit.Disk
 	disk = &hyperkit.RawDisk{
-		Path: i.Directory + "/" + i.Distribution.Image.Rootfs,
+		Path: i.Directory + "/disk.raw",
 		Size: 2048,
 		Trim: true,
 	}
@@ -703,6 +780,31 @@ func retryStart(attempts int, sleep time.Duration, f func(*hyperkit.HyperKit, st
 	return nil
 }
 
+func retrySshDial(attempts int, sleep time.Duration, f func(string, string, *ssh.ClientConfig) (*ssh.Client, error), network string, addr string, config *ssh.ClientConfig) error {
+	if _, err := f(network, addr, config); err != nil {
+		if err.Error() != "ssh: handshake failed: ssh: unable to authenticate, attempted methods [none publickey], no supported methods remain" {
+			if s, ok := err.(stop); ok {
+				// Return the original error for later checking
+				return s.error
+			}
+
+			if attempts--; attempts > 0 {
+				// Add some randomness to prevent creating a Thundering Herd
+				//log.Infof("waiting for ssh connection, retry attempt %d\n", attempts)
+				//log.Infof("err %s\n", err)
+				//jitter := time.Duration(rand.Int63n(int64(sleep)))
+				//sleep = sleep + jitter/2
+				//log.Infof("sleeping for %f\n", sleep.Seconds())
+				time.Sleep(sleep)
+				return retrySshDial(attempts, sleep, f, network, addr, config)
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
 func retryMacAddress(attempts int, sleep time.Duration, f func(string) (string, error), uuid string) (string, error) {
 	var mac string
 	var err error
@@ -728,4 +830,81 @@ func retryMacAddress(attempts int, sleep time.Duration, f func(string) (string, 
 
 type stop struct {
 	error
+}
+
+var Ch chan map[string]string = make(chan map[string]string)
+
+func KeyScanCallback(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	//Ch <- fmt.Sprintf("%s %s", hostname[:len(hostname)-3], string(ssh.MarshalAuthorizedKey(key)))
+	Ch <- map[string]string{hostname[:len(hostname)-3]: string(ssh.MarshalAuthorizedKey(key))}
+	//Ch <- fmt.Sprintf("%s", string(ssh.MarshalAuthorizedKey(key)))
+	return nil
+}
+
+func dial(server string, config *ssh.ClientConfig, wg *sync.WaitGroup) {
+	if err := retrySshDial(60, time.Duration(time.Second*2), ssh.Dial, "tcp", fmt.Sprintf("%s:%d", server, 22), config); err != nil {
+		log.Fatalln("Failed to dial:", err)
+	}
+	/*
+		_, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", server, 22), config)
+		if err != nil {
+			log.Fatalln("Failed to dial:", err)
+		}
+	*/
+	wg.Done()
+}
+
+var knownHostEntry string
+
+func out(wg *sync.WaitGroup) {
+	for s := range Ch {
+		for k, v := range s {
+			//knownHostEntry = fmt.Sprintf("%s", v)
+			publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(v))
+			if err != nil {
+				log.Error(err)
+				wg.Done()
+			}
+			khFilePath := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+			f, err := os.OpenFile(khFilePath, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				log.Error(err)
+				wg.Done()
+			}
+			defer f.Close()
+
+			knownHosts := knownhosts.Normalize(k)
+			_, err = f.WriteString(knownhosts.Line([]string{knownHosts}, publicKey) + "\n")
+			wg.Done()
+		}
+
+	}
+}
+
+func sshKeyScan(username, host string) error {
+	auth_socket := os.Getenv("SSH_AUTH_SOCK")
+	if auth_socket == "" {
+		return errors.New("no $SSH_AUTH_SOCK defined")
+	}
+	conn, err := net.DialTimeout("unix", auth_socket, time.Duration(time.Minute*1))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	ag := agent.NewClient(conn)
+	auths := []ssh.AuthMethod{ssh.PublicKeysCallback(ag.Signers)}
+
+	config := &ssh.ClientConfig{
+		User:            username,
+		Auth:            auths,
+		HostKeyCallback: KeyScanCallback,
+		Timeout:         time.Minute * 1,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go out(&wg)
+	go dial(host, config, &wg)
+	wg.Wait()
+	return nil
 }

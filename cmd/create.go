@@ -2,27 +2,24 @@ package cmd
 
 import (
 	"errors"
-	"os"
+	"fmt"
 
 	"github.com/spf13/cobra"
+)
 
-	log "github.com/sirupsen/logrus"
+var (
+	name       string
+	distroType string
 )
 
 func init() {
-	rootCmd.AddCommand(createCmd)
+	createCmd.PersistentFlags().StringVarP(&name, "name", "n", "", "-name of the instance")
+	createCmd.PersistentFlags().StringVarP(&distroType, "type", "t", "", "distribution type")
 	createCmd.AddCommand(createDistributionCmd)
-	/*
-		createCmd.Flags().StringVarP(&name, "name", "n", "", "-name")
-		createCmd.Flags().StringVarP(&distro, "distribution", "d", "Debian", "-ds")
-		createCmd.MarkFlagRequired("name")
-	*/
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create",
-	Short: "creates a virtual machine",
-	Long:  ``,
+	Use: "create",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) < 1 {
 			return errors.New("requires a argument")
@@ -30,13 +27,6 @@ var createCmd = &cobra.Command{
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-
+		fmt.Println(name)
 	},
-}
-
-func createInitConfig() {
-	if name == "" {
-		log.Println("name is missing")
-		os.Exit(1)
-	}
 }

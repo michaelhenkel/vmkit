@@ -10,7 +10,8 @@ import (
 )
 
 func init() {
-	rootCmd.AddCommand(deleteCmd)
+	//rootCmd.AddCommand(deleteCmd)
+	deleteCmd.PersistentFlags().StringVarP(&name, "name", "n", "", "-name of the instance")
 	deleteCmd.AddCommand(deleteInstanceCmd)
 }
 

@@ -13,14 +13,13 @@ import (
 )
 
 var (
-	distroType  string
 	distroImage string
+	distroURL   string
 )
 
 func init() {
-	createDistributionCmd.Flags().StringVarP(&name, "name", "n", "default", "-name")
-	createDistributionCmd.Flags().StringVarP(&distroType, "type", "t", "Debian", "distribution type")
 	createDistributionCmd.Flags().StringVarP(&distroImage, "image", "i", "", "distribution image file")
+	createDistributionCmd.Flags().StringVarP(&distroURL, "url", "u", "", "distribution image url")
 	createDistributionCmd.MarkFlagRequired("type")
 }
 
@@ -29,12 +28,14 @@ var createDistributionCmd = &cobra.Command{
 	Short: "creates a distribution",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		if name != "" && (distroType == "" || distroImage == "") {
-			fmt.Println("with name a distro type and distro image file must be specified")
-			os.Exit(1)
+		if name != "" {
+			if distroType == "" && (distroImage == "" && distroURL == "") {
+				fmt.Println("with name a distro type and distro image file or url file must be specified")
+				os.Exit(1)
+			}
 		}
-		if name == "" && distroImage != "" {
-			fmt.Println("with distro image file, a name must be specified")
+		if name == "" && (distroImage != "" || distroURL != "") {
+			fmt.Println("with distro image file or url, a name must be specified")
 			os.Exit(1)
 		}
 		if name == "" {
@@ -65,6 +66,13 @@ var createDistributionCmd = &cobra.Command{
 			distro.Image = img
 		}
 
+		if distroURL != "" {
+			img := &image.Image{
+				ImageURL: distroURL,
+			}
+			distro.Image = img
+		}
+
 		var dI distribution.DistributionInterface
 		switch distribution.DistributionType(distroType) {
 		case distribution.DebianDist:
@@ -84,6 +92,32 @@ var createDistributionCmd = &cobra.Command{
 		}
 
 		if err := distro.Create(dI, env); err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+	},
+}
+
+var getDistributionCmd = &cobra.Command{
+	Use:   "distribution",
+	Short: "gets a distribution",
+	Long:  ``,
+	Run: func(cmd *cobra.Command, args []string) {
+		env, err := environment.Create()
+		if err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+		distro := &distribution.Distribution{
+			Environment: env,
+		}
+		if distroType != "" {
+			distro.Type = distribution.DistributionType(distroType)
+		}
+		if name != "" {
+			distro.Name = name
+		}
+		if err := distro.Get(); err != nil {
 			log.Println(err)
 			os.Exit(1)
 		}
